@@ -38,7 +38,7 @@ header.main .bar{display:flex;align-items:center;gap:18px;height:66px}
 /* ---------------- hero ---------------- */
 .hero{background:linear-gradient(135deg,#0b1f3a 0%,#123a6b 55%,#1d4f86 100%);color:#fff;overflow:hidden;position:relative}
 .hero::after{content:'';position:absolute;width:520px;height:520px;border-radius:50%;background:radial-gradient(circle,rgba(201,162,75,.28),transparent 70%);right:-140px;top:-120px;pointer-events:none}
-.hero-inner{display:grid;grid-template-columns:1.05fr 1fr;gap:30px;align-items:center;padding:44px 0 52px;position:relative}
+.hero-inner{display:grid;grid-template-columns:1.05fr 1fr;gap:30px;align-items:center;padding:44px 18px 52px;position:relative}
 .overline{color:var(--gold2);font-size:.75rem;font-weight:800;letter-spacing:.18em;text-transform:uppercase;margin-bottom:10px}
 .hero h1{font-size:2.7rem;line-height:1.12;font-weight:800}
 .hero h1 em{color:var(--gold2);font-style:normal}
@@ -227,7 +227,7 @@ footer .fine{border-top:1px solid rgba(255,255,255,.15);margin-top:24px;padding-
   .catalog-layout{grid-template-columns:1fr}
   .filters{position:static;order:2}
   .product-layout{grid-template-columns:1fr}
-  .hero-inner{grid-template-columns:1fr;padding:28px 0 36px}
+  .hero-inner{grid-template-columns:1fr;padding:28px 18px 36px}
   .hero-visual{display:none}
   .form-grid{grid-template-columns:1fr}
   .bottom-nav{display:flex}
