@@ -16,6 +16,8 @@
 .stage-placeholder{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#c8d6ea;text-align:center;padding:24px;z-index:1}
 .stage-placeholder div:first-child{font-size:3rem}
 .hint{position:absolute;bottom:12px;left:0;right:0;text-align:center;color:rgba(255,255,255,.75);font-size:.72rem;z-index:4;pointer-events:none}
+.auto-badge{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:6;background:var(--gold);color:#2a1f06;font-weight:800;font-size:.9rem;padding:8px 18px;border-radius:30px;box-shadow:0 6px 18px rgba(0,0,0,.3);pointer-events:none}
+.auto-badge b{font-size:1.25rem}
 .controls-panel{background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:18px;display:flex;flex-direction:column;gap:12px;box-shadow:var(--shadow-sm)}
 .controls-panel select,.controls-panel input[type=range]{width:100%;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:.9rem;background:#fff}
 .controls-panel input[type=range]{padding:0;border:none;background:none}
@@ -57,7 +59,8 @@
           <div>📷</div>
           <p><strong>Ative a câmera ou envie uma selfie</strong><br>para ver a armação em você</p>
         </div>
-        <div class="hint">Arraste para ajustar a posição · use os controles abaixo</div>
+        <div class="hint" id="stage-hint">Aponte a câmera para o rosto — a IA ajusta e dispara sozinha</div>
+        <div class="auto-badge hidden" id="auto-badge">📸 Foto em <b id="auto-num">3</b></div>
       </div>
 
       <div class="controls-panel">
@@ -82,6 +85,7 @@
           <button class="btn btn-ghost" id="btn-guide">🎯 Guia: ligado</button>
         </div>
         <button class="btn btn-gold btn-block" id="btn-ia" style="font-size:.88rem">🤖 Rastreio automático: LIGADO</button>
+        <button class="btn btn-navy btn-block" id="btn-auto" style="font-size:.88rem">⚡ Disparo automático: LIGADO</button>
         <small id="ia-status" style="color:var(--muted);font-size:.72rem;text-align:center;display:block;margin-top:-6px">A armação se ajusta sozinha nos seus olhos</small>
 
         <button class="btn btn-gold btn-block" id="btn-snap">📸 Tirar foto com esta armação</button>
@@ -136,6 +140,12 @@ let landmarker = null;
 let iaCarregada = false;
 let iaFalhou = false;
 let tsVideo = 0;
+let autoFoto = true;        // disparo automático ligado por padrão
+let autoArmed = true;       // pode disparar (liberado depois de salvar)
+let autoEstavel = 0;        // frames com rosto parado no círculo
+let autoPerdas = 0;         // frames sem detectar rosto (tolerância)
+let autoUltima = null;      // última posição para medir estabilidade
+let autoTimer = null;       // contagem regressiva
 const smooth = { x: null, y: null, size: null, rot: 0 };
 let rot = 0;
 const pos = { x: 0.5, y: 0.40, size: 0.62 };
@@ -189,7 +199,49 @@ $('#btn-ia').addEventListener('click', () => {
   }
   iaLigado = !iaLigado; aplicarEstadoIA();
 });
-function desligaIA() { if (iaLigado) { iaLigado = false; aplicarEstadoIA(); } }
+$('#btn-auto').addEventListener('click', () => {
+  autoFoto = !autoFoto;
+  $('#btn-auto').innerHTML = autoFoto ? '⚡ Disparo automático: LIGADO' : '⚡ Disparo automático: desligado';
+  $('#btn-auto').style.background = autoFoto ? '' : '#eef2f8';
+  $('#btn-auto').style.color = autoFoto ? '' : 'var(--navy)';
+  if (!autoFoto) cancelarContagem();
+});
+function cancelarContagem() {
+  clearInterval(autoTimer);
+  autoTimer = null;
+  document.getElementById('auto-badge')?.classList.add('hidden');
+  autoEstavel = 0;
+}
+function checarAutoFoto() {
+  if (!autoFoto || !autoArmed || !usandoCamera) return;
+  // o centro dos olhos precisa estar dentro do círculo guia
+  const noCirculo = Math.abs(pos.x - 0.5) < 0.20 && Math.abs(pos.y - 0.38) < 0.17;
+  if (!noCirculo) { cancelarContagem(); autoUltima = null; return; }
+  if (autoUltima) {
+    const delta = Math.abs(pos.x - autoUltima.x) + Math.abs(pos.y - autoUltima.y) + Math.abs(pos.size - autoUltima.size);
+    if (delta < 0.012) autoEstavel++;
+    else { autoEstavel = 0; cancelarContagem(); }
+  }
+  autoUltima = { x: pos.x, y: pos.y, size: pos.size };
+  if (autoEstavel < 5 || autoTimer) return;
+  let n = 3;
+  const badge = document.getElementById('auto-badge');
+  badge.classList.remove('hidden');
+  document.getElementById('auto-num').textContent = n;
+  autoTimer = setInterval(() => {
+    n--;
+    if (n <= 0) {
+      clearInterval(autoTimer); autoTimer = null;
+      badge.classList.add('hidden');
+      autoArmed = false;
+      tirarFoto();
+      setTimeout(() => { autoArmed = true; autoUltima = null; autoEstavel = 0; }, 5000);
+    } else {
+      document.getElementById('auto-num').textContent = n;
+    }
+  }, 750);
+}
+function desligaIA() { if (iaLigado) { iaLigado = false; aplicarEstadoIA(); } cancelarContagem(); }
 function aplicarEstadoIA() {
   btnIA.innerHTML = iaFalhou ? '🤖 Tentar IA de novo' : (iaLigado ? '🤖 Rastreio automático: LIGADO' : '🤖 Rastreio automático: desligado');
   btnIA.style.background = iaLigado && !iaFalhou ? 'linear-gradient(180deg,var(--gold2),var(--gold-dark))' : '#eef2f8';
@@ -234,7 +286,7 @@ async function detectarIANaFoto() {
   try {
     const res = lm.detectForVideo(userPhoto, performance.now());
     const L = res && res.faceLandmarks && res.faceLandmarks[0];
-    if (L) { aplicarPose(L, userPhoto, true); OP.toast('Rosto detectado! Ajuste fino à vontade 👌'); }
+    if (L) { aplicarPose(L, userPhoto, true); setTimeout(tirarFoto, 600); }
     else OP.toast('Nenhum rosto detectado na foto — arraste manualmente');
   } catch (e) { OP.toast('Não consegui detectar na foto'); }
 }
@@ -287,7 +339,14 @@ function loopIA() {
     try {
       const res = landmarker.detectForVideo(cam, now);
       const L = res && res.faceLandmarks && res.faceLandmarks[0];
-      if (L) aplicarPose(L, cam, false);
+      if (L) {
+        autoPerdas = 0;
+        aplicarPose(L, cam, false);
+        checarAutoFoto();
+      } else {
+        autoPerdas++;
+        if (autoPerdas >= 6) { cancelarContagem(); autoUltima = null; autoPerdas = 0; }
+      }
     } catch (e) { /* ignora o frame */ }
   };
   tick();
@@ -321,7 +380,7 @@ async function carregarIA() {
   }
 }
 
-$('#btn-snap').addEventListener('click', () => {
+function tirarFoto() {
   const w = stage.clientWidth, h = stage.clientHeight;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const cv = document.createElement('canvas');
@@ -363,7 +422,8 @@ $('#btn-snap').addEventListener('click', () => {
   document.getElementById('snap-img').src = urlFoto;
   document.getElementById('snap-modal').classList.remove('hidden');
   window._fotoProvador = urlFoto;
-});
+}
+$('#btn-snap').addEventListener('click', tirarFoto);
 
 function baixarFoto() {
   const a = document.createElement('a');
@@ -372,8 +432,16 @@ function baixarFoto() {
   a.click();
 }
 
-document.getElementById('snap-close').addEventListener('click', () => document.getElementById('snap-modal').classList.add('hidden'));
-document.getElementById('snap-retry').addEventListener('click', () => document.getElementById('snap-modal').classList.add('hidden'));
+function fecharPreview() {
+  document.getElementById('snap-modal').classList.add('hidden');
+  cancelarContagem();
+  autoUltima = null;
+  autoEstavel = 0;
+  autoArmed = false;
+  setTimeout(() => { autoArmed = true; }, 3000);
+}
+document.getElementById('snap-close').addEventListener('click', fecharPreview);
+document.getElementById('snap-retry').addEventListener('click', fecharPreview);
 document.getElementById('snap-download').addEventListener('click', baixarFoto);
 document.getElementById('snap-share').addEventListener('click', async () => {
   try {
